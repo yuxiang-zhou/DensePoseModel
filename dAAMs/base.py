@@ -122,25 +122,19 @@ class dAAMs(HolisticAAM):
                                                   self.holistic_features[j],
                                                   prefix=scale_prefix,
                                                   verbose=verbose)
-
-            # Obtain warped images - we use a scaled version of the
-            # reference shape, computed here. This is because the mean
-            # moves when we are incrementing, and we need a consistent
-            # reference frame.
-
-            warped_images = warp_images(feature_images, self.reference_frame, self.transforms, group, scale_prefix, verbose)
-
             # handle scales
             if self.scales[j] != 1:
                 # Scale feature images only if scale is different than 1
-                warped_images = scale_images(warped_images, self.scales[j],
+                scaled_images = scale_images(feature_images, self.scales[j],
                                              prefix=scale_prefix,
                                              verbose=verbose)
+            else:
+                scaled_images = feature_images
 
             # Extract potentially rescaled shapes
-            scale_shapes = [i.landmarks[group].lms for i in warped_images]
+            scale_shapes = [i.landmarks[group].lms for i in scaled_images]
 
-             # Build the shape model
+            # Build the shape model
             if verbose:
                 print_dynamic('{}Building shape model'.format(scale_prefix))
 
@@ -150,6 +144,16 @@ class dAAMs(HolisticAAM):
                 self.shape_models.append(shape_model)
             else:
                 self.shape_models.append(deepcopy(shape_model))
+
+            # Obtain warped images - we use a scaled version of the
+            # reference shape, computed here. This is because the mean
+            # moves when we are incrementing, and we need a consistent
+            # reference frame.
+            scaled_reference_shape = Scale(self.scales[j], n_dims=2).apply(
+                self.reference_shape)
+            warped_images = self._warp_images(scaled_images, scale_shapes,
+                                              scaled_reference_shape,
+                                              j, scale_prefix, verbose)
 
             # obtain appearance model
             if verbose:
@@ -175,6 +179,11 @@ class dAAMs(HolisticAAM):
             if max_sc is not None:
                 sm.trim_components(max_sc)
 
+    def _warp_images(self, images, shapes, reference_shape, scale_index,
+                     prefix, verbose):
+        return warp_images(images, shapes, self.reference_frame, self.transforms, self.scales[scale_index],
+                           prefix=prefix, verbose=verbose)
+
     def _instance(self, scale_index, shape_instance, appearance_instance):
         template = self.appearance_models[scale_index].mean()
         landmarks = template.landmarks['source'].lms
@@ -188,7 +197,7 @@ class dAAMs(HolisticAAM):
             reference_frame.mask, transform, warp_landmarks=True)
 
 
-def warp_images(images, reference_frame, transforms, group, prefix='',
+def warp_images(images, shapes, reference_frame, transforms, scale, prefix='',
                 verbose=None):
 
     warped_images = []
@@ -199,8 +208,6 @@ def warp_images(images, reference_frame, transforms, group, prefix='',
         # warp images
         warped_i = i.warp_to_mask(reference_frame.mask, t)
         # attach reference frame landmarks to images
-        warped_i.landmarks[group] = reference_frame.landmarks['source']
-
+        warped_i.landmarks['source'] = reference_frame.landmarks['source']
         warped_images.append(warped_i)
-
     return warped_images
