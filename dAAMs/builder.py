@@ -1,11 +1,13 @@
-from menpofit.aam import AAMBuilder
-from menpofit.aam.lineerror import interpolate
+from .MatlabExecuter import MatlabExecuter
+from .lineerror import interpolate
+from .svs import SVS
+
+from menpofit.aam import HolisticAAM
 from menpofit.base import create_pyramid
 from menpofit.transform import DifferentiableThinPlateSplines
 from menpo.transform.base import Transform
-from menpofit.deformationfield import SVS
 from menpofit.builder import normalization_wrt_reference_shape
-from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
+
 from menpo.feature import igo
 from menpo.image import Image, BooleanImage
 from menpo.shape import PointCloud
@@ -46,7 +48,7 @@ class OpticalFlowTransform(Transform):
 
 
 # Deformation Field using ICP, NICP --------------
-class DeformationFieldBuilder(AAMBuilder):
+class DeformationField(HolisticAAM):
     def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
@@ -306,7 +308,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
 
 # Deformation Field using SVS, Optical Flow
-class OpticalFieldBuilder(DeformationFieldBuilder):
+class OpticalField(DeformationField):
 
     def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
@@ -396,7 +398,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         )))
         # self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
-        self.reference_shape = self.reference_frame.landmarks['sparse'].lms
+        # self.reference_shape = self.reference_frame.landmarks['sparse'].lms
 
         # Get Dense Shape from Masked Image
         # dense_reference_shape = PointCloud(
@@ -405,17 +407,15 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         # Set Dense Shape as Reference Landmarks
         # self.reference_frame.landmarks['source'] = dense_reference_shape
-        self._shapes = shapes
-        self._aligned_shapes = []
+        # self._shapes = shapes
+        # self._aligned_shapes = []
 
         # Create Cache Directory
         home_dir = os.getcwd()
         dir_hex = uuid.uuid1()
 
-        svs_path_in = '{}/.cache/{}/svs_training'.format(home_dir, dir_hex) if \
-            self._db_path is None else self._db_path
+        svs_path_in = '{}/.cache/{}/svs_training'.format(home_dir, dir_hex)
         svs_path_out = svs_path_in
-        self._db_path = svs_path_in
 
         matE = MatlabExecuter()
         mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfdev'
