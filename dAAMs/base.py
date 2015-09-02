@@ -24,6 +24,7 @@ from menpofit.aam import HolisticAAM
 from menpofit import checks
 from menpofit.transform import (DifferentiableThinPlateSplines,
                                 DifferentiablePiecewiseAffine)
+from menpo.transform.piecewiseaffine.base import CythonPWA as pwa
 from menpo.transform import Scale
 from menpofit.builder import normalization_wrt_reference_shape
 
@@ -60,7 +61,7 @@ class dAAMs(HolisticAAM):
         super(dAAMs, self).__init__(images, group, verbose,
                  reference_shape,
                  holistic_features,
-                 DifferentiablePiecewiseAffine, diagonal,
+                 pwa, diagonal,
                  scales, max_shape_components,
                  max_appearance_components, batch_size)
 
