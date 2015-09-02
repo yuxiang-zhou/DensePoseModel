@@ -280,6 +280,7 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     group_align = group
     _db_path = images[0].path.parent
     reference_align_shape = reference_shape
+    n_landmarks = reference_shape.n_points
     # Normalize the scaling of all images wrt the reference_shape size
     for i in images:
         if glob.glob('{}/*_lms.pts'.format(i.path.parent)):
@@ -308,7 +309,7 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     lms_shapes = [i.landmarks['align'].lms for i in normalized_images]
     shapes = [i.landmarks[group].lms for i in normalized_images]
     n_shapes = len(shapes)
-    n_landmarks = reference_shape.n_points
+
 
     # groups label
     sample_groups = group_from_labels(
@@ -329,7 +330,7 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         bound_list.append(np.array([bmax[0], bmin[1]]))
     bound_list = PointCloud(np.array(bound_list))
 
-    reference_frame = build_reference_frame(bound_list)
+    reference_frame = build_reference_frame(bound_list, boundary=15)
 
     # Translation between reference shape and aliened shapes
     align_centre = target_shape.centre_of_bounds()
@@ -451,4 +452,4 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         img.landmarks['PTS'] = ds
         ni.append(img)
 
-    return ni, transforms, reference_frame#, reference_frame, dense_reference_shape, reference_shape, testing_points,target_shape,align_t
+    return ni, transforms, reference_frame, n_landmarks#, reference_frame, dense_reference_shape, reference_shape, testing_points,target_shape,align_t

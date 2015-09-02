@@ -19,6 +19,7 @@ from .lineerror import interpolate
 from .svs import SVS
 from .transforms import OpticalFlowTransform
 from .tools import rescale_images_to_reference_shape
+from .transforms import LinearWarp
 
 from menpofit.aam import HolisticAAM
 from menpofit import checks
@@ -61,7 +62,7 @@ class dAAMs(HolisticAAM):
         super(dAAMs, self).__init__(images, group, verbose,
                  reference_shape,
                  holistic_features,
-                 pwa, diagonal,
+                 LinearWarp, diagonal,
                  scales, max_shape_components,
                  max_appearance_components, batch_size)
 
@@ -88,9 +89,11 @@ class dAAMs(HolisticAAM):
             lowest to highest scale
         """
         # Rescale to existing reference shape
-        image_batch, self.transforms, self.reference_frame = rescale_images_to_reference_shape(
-            image_batch, group, self.reference_shape,
-            verbose=verbose)
+        image_batch, self.transforms, self.reference_frame, self.n_landmarks\
+            = rescale_images_to_reference_shape(
+                image_batch, group, self.reference_shape,
+                verbose=verbose
+            )
 
         # build models at each scale
         if verbose:
@@ -119,66 +122,47 @@ class dAAMs(HolisticAAM):
                                                   self.holistic_features[j],
                                                   prefix=scale_prefix,
                                                   verbose=verbose)
-            # handle scales
-            if self.scales[j] != 1:
-                # Scale feature images only if scale is different than 1
-                scaled_images = scale_images(feature_images, self.scales[j],
-                                             prefix=scale_prefix,
-                                             verbose=verbose)
-            else:
-                scaled_images = feature_images
-
-            # Extract potentially rescaled shapes
-            scale_shapes = [i.landmarks[group].lms for i in scaled_images]
-
-            # Build the shape model
-            if verbose:
-                print_dynamic('{}Building shape model'.format(scale_prefix))
-
-            if not increment:
-                if j == 0:
-                    shape_model = self._build_shape_model(
-                        scale_shapes, j)
-                    self.shape_models.append(shape_model)
-                else:
-                    self.shape_models.append(deepcopy(shape_model))
-            else:
-                self._increment_shape_model(
-                    scale_shapes,  self.shape_models[j],
-                    forgetting_factor=shape_forgetting_factor)
 
             # Obtain warped images - we use a scaled version of the
             # reference shape, computed here. This is because the mean
             # moves when we are incrementing, and we need a consistent
             # reference frame.
-            scaled_reference_shape = Scale(self.scales[j], n_dims=2).apply(
-                self.reference_shape)
-            warped_images = self._warp_images(scaled_images, scale_shapes,
-                                              scaled_reference_shape,
-                                              j, scale_prefix, verbose)
+
+            warped_images = warp_images(feature_images, self.reference_frame, self.transforms, group, scale_prefix, verbose)
+
+            # handle scales
+            if self.scales[j] != 1:
+                # Scale feature images only if scale is different than 1
+                warped_images = scale_images(warped_images, self.scales[j],
+                                             prefix=scale_prefix,
+                                             verbose=verbose)
+
+            # Extract potentially rescaled shapes
+            scale_shapes = [i.landmarks[group].lms for i in warped_images]
+
+             # Build the shape model
+            if verbose:
+                print_dynamic('{}Building shape model'.format(scale_prefix))
+
+            if j == 0:
+                shape_model = self._build_shape_model(
+                    scale_shapes, j)
+                self.shape_models.append(shape_model)
+            else:
+                self.shape_models.append(deepcopy(shape_model))
 
             # obtain appearance model
             if verbose:
                 print_dynamic('{}Building appearance model'.format(
                     scale_prefix))
 
-            if not increment:
-                appearance_model = PCAModel(warped_images)
-                # trim appearance model if required
-                if self.max_appearance_components is not None:
-                    appearance_model.trim_components(
-                        self.max_appearance_components[j])
-                # add appearance model to the list
-                self.appearance_models.append(appearance_model)
-            else:
-                # increment appearance model
-                self.appearance_models[j].increment(
-                    warped_images,
-                    forgetting_factor=appearance_forgetting_factor)
-                # trim appearance model if required
-                if self.max_appearance_components is not None:
-                    self.appearance_models[j].trim_components(
-                        self.max_appearance_components[j])
+            appearance_model = PCAModel(warped_images)
+            # trim appearance model if required
+            if self.max_appearance_components is not None:
+                appearance_model.trim_components(
+                    self.max_appearance_components[j])
+            # add appearance model to the list
+            self.appearance_models.append(appearance_model)
 
             if verbose:
                 print_dynamic('{}Done\n'.format(scale_prefix))
@@ -191,22 +175,32 @@ class dAAMs(HolisticAAM):
             if max_sc is not None:
                 sm.trim_components(max_sc)
 
-    def _warp_images(self, images, shapes, reference_shape, scale_index,
-                     prefix, verbose):
-        return warp_images(images, shapes, self.reference_frame, self.transforms,
-                           prefix=prefix, verbose=verbose)
+    def _instance(self, scale_index, shape_instance, appearance_instance):
+        template = self.appearance_models[scale_index].mean()
+        landmarks = template.landmarks['source'].lms
+
+        reference_frame = build_reference_frame(shape_instance)
+
+        transform = pwa(
+            reference_frame.landmarks['source'].lms, landmarks)
+
+        return appearance_instance.as_unmasked(copy=False).warp_to_mask(
+            reference_frame.mask, transform, warp_landmarks=True)
 
 
-def warp_images(images, shapes, reference_frame, transforms, prefix='',
+def warp_images(images, reference_frame, transforms, group, prefix='',
                 verbose=None):
 
     warped_images = []
     # Build a dummy transform, use set_target for efficiency
+
     for i, t in zip(images, transforms):
         # Update Transform Target
         # warp images
         warped_i = i.warp_to_mask(reference_frame.mask, t)
         # attach reference frame landmarks to images
-        warped_i.landmarks['source'] = reference_frame.landmarks['source']
+        warped_i.landmarks[group] = reference_frame.landmarks['source']
+
         warped_images.append(warped_i)
+
     return warped_images

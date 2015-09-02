@@ -24,15 +24,14 @@ class OpticalFlowTransform(Transform):
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
-    def __init__(self, model, group_corr, n_landmarks=0):
-        super(LinearWarp, self).__init__(model,
-                                         DifferentiableAlignmentSimilarity)
+    def __init__(self, model, n_landmarks=0):
+        super(LinearWarp, self).__init__(model)
+        self.pdm = OrthoPDM(model)
         self.n_landmarks = n_landmarks
         self.W = np.vstack((self.similarity_model.components,
                             self.model.components))
         v = self.W[:, :self.n_dims*self.n_landmarks]
         self.pinv_v = np.linalg.pinv(v)
-        self.group_corr = group_corr
         # sm_mean_l = self.models[self.model_index-1].mean()
         # sm_mean_h = self.model.mean()
         # icp = ICP([sm_mean_l], sm_mean_h)
