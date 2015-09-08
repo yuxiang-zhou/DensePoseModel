@@ -16,6 +16,7 @@ from menpofit.transform import OrthoMDTransform, LinearOrthoMDTransform
 import menpofit.checks as checks
 
 from .transforms import LinearWarp
+from .results import DAAMFitterResult
 
 from menpofit.aam import LucasKanadeAAMFitter
 from menpofit.aam.algorithm.lk import (
@@ -350,3 +351,8 @@ class LucasKanadeDAAMFitter(LucasKanadeAAMFitter):
             algorithm = lk_algorithm_cls(interface)
 
             self.algorithms.append(algorithm)
+
+    def _fitter_result(self, image, algorithm_results, affine_correction,
+                       gt_shape=None):
+        return DAAMFitterResult(image, self, algorithm_results,
+                               affine_correction, gt_shape=gt_shape)
