@@ -345,7 +345,7 @@ class LucasKanadeDAAMFitter(LucasKanadeAAMFitter):
             template = am.mean()
             # build orthonormal model driven transform
             md_transform = LinearWarp(
-                sm, self.aam.n_landmarks)
+                sm, self.aam.n_landmarks, self.aam.n_align_lms)
             interface = LucasKanadeStandardInterface(am, md_transform,
                                                      template, sampling=s)
             algorithm = lk_algorithm_cls(interface)

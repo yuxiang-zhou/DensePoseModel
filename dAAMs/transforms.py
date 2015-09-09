@@ -24,14 +24,18 @@ class OpticalFlowTransform(Transform):
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
-    def __init__(self, model, n_landmarks=0):
+    def __init__(self, model, n_landmarks=0, n_align_lms=0):
         super(LinearWarp, self).__init__(model)
         self.pdm = OrthoPDM(model)
         self.n_landmarks = n_landmarks
+        self.n_align_lms = n_align_lms
         self.W = np.vstack((self.similarity_model.components,
                             self.model.components))
         v = self.W[:, :self.n_dims*self.n_landmarks]
         self.pinv_v = np.linalg.pinv(v)
+
+        va = self.W[:, :self.n_dims*self.n_align_lms]
+        self.pinv_va = np.linalg.pinv(va)
         # sm_mean_l = self.models[self.model_index-1].mean()
         # sm_mean_h = self.model.mean()
         # icp = ICP([sm_mean_l], sm_mean_h)
@@ -68,31 +72,14 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
     def set_target(self, target):
         if target.n_points < self.target.n_points:
-            # densify target
-            # icp = ICP([self.sparse_target], target)
-            #
-            # # Finding Correspondence by Group
-            # align_gcorr = None
-            # groups = self.group_corr
-            #
-            # for g in groups:
-            #     g_align_s = []
-            #     for aligned_s in icp.aligned_shapes:
-            #         g_align_s.append(PointCloud(aligned_s.points[g]))
-            #     gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-            #     g_align = np.array(gnicp.point_correspondence) + g[0]
-            #     if align_gcorr is None:
-            #         align_gcorr = g_align
-            #     else:
-            #         align_gcorr = np.hstack((align_gcorr, g_align))
-            #
-            # if align_gcorr is None:
-            #     align_gcorr = [range(self.n_landmarks)]
 
-            align_gcorr = [range(self.n_landmarks)]
+            if target.n_points < self.n_landmarks:
+                target = PointCloud(target.points[:self.n_align_lms])
+                target = np.dot(np.dot(target.as_vector(), self.pinv_va), self.W)
+            else:
+                target = PointCloud(target.points[:self.n_landmarks])
+                target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
 
-            target = PointCloud(target.points[align_gcorr[0]])
-            target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
             target = PointCloud(np.reshape(target, (-1, self.n_dims)))
 
         OrthoPDM.set_target(self, target)

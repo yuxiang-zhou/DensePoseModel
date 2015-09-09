@@ -56,7 +56,7 @@ class dAAMs(HolisticAAM):
     """
     def __init__(self, images, group=None, verbose=False, reference_shape=None,
                  holistic_features=no_op, diagonal=None,
-                 scales=(1.0, 1.0), max_shape_components=None,
+                 scales=(0.5, 1.0), max_shape_components=None,
                  max_appearance_components=None, batch_size=None):
 
         super(dAAMs, self).__init__(images, group, verbose,
@@ -89,7 +89,7 @@ class dAAMs(HolisticAAM):
             lowest to highest scale
         """
         # Rescale to existing reference shape
-        image_batch, self.transforms, self.reference_frame, self.n_landmarks\
+        image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms\
             = rescale_images_to_reference_shape(
                 image_batch, group, self.reference_shape,
                 verbose=verbose
@@ -123,13 +123,7 @@ class dAAMs(HolisticAAM):
                                                   prefix=scale_prefix,
                                                   verbose=verbose)
             # handle scales
-            if self.scales[j] != 1:
-                # Scale feature images only if scale is different than 1
-                scaled_images = scale_images(feature_images, self.scales[j],
-                                             prefix=scale_prefix,
-                                             verbose=verbose)
-            else:
-                scaled_images = feature_images
+            scaled_images = feature_images
 
             # Extract potentially rescaled shapes
             scale_shapes = [i.landmarks[group].lms for i in scaled_images]
@@ -149,10 +143,8 @@ class dAAMs(HolisticAAM):
             # reference shape, computed here. This is because the mean
             # moves when we are incrementing, and we need a consistent
             # reference frame.
-            scaled_reference_shape = Scale(self.scales[j], n_dims=2).apply(
-                self.reference_shape)
             warped_images = self._warp_images(scaled_images, scale_shapes,
-                                              scaled_reference_shape,
+                                              self.reference_shape,
                                               j, scale_prefix, verbose)
 
             # obtain appearance model
@@ -181,8 +173,10 @@ class dAAMs(HolisticAAM):
 
     def _warp_images(self, images, shapes, reference_shape, scale_index,
                      prefix, verbose):
-        return warp_images(images, shapes, self.reference_frame, self.transforms, self.scales[scale_index],
-                           prefix=prefix, verbose=verbose)
+        scaled_images = scale_images(images, self.scales[scale_index],
+                                             prefix=prefix,
+                                             verbose=verbose)
+        return warp_images(scaled_images, self.reference_frame, self.transforms, self.scales[scale_index])
 
     def _instance(self, scale_index, shape_instance, appearance_instance):
         template = self.appearance_models[scale_index].mean()
@@ -197,8 +191,7 @@ class dAAMs(HolisticAAM):
             reference_frame.mask, transform, warp_landmarks=True)
 
 
-def warp_images(images, shapes, reference_frame, transforms, scale, prefix='',
-                verbose=None):
+def warp_images(images, reference_frame, transforms, scale):
 
     warped_images = []
     # Build a dummy transform, use set_target for efficiency
@@ -206,7 +199,9 @@ def warp_images(images, shapes, reference_frame, transforms, scale, prefix='',
     for i, t in zip(images, transforms):
         # Update Transform Target
         # warp images
-        warped_i = i.warp_to_mask(reference_frame.mask, t)
+        rescale = 1.0 / scale
+        scale_i = i.rescale(rescale) if scale != 1.0 else i
+        warped_i = scale_i.warp_to_mask(reference_frame.mask, t)
         # attach reference frame landmarks to images
         warped_i.landmarks['source'] = reference_frame.landmarks['source']
         warped_images.append(warped_i)

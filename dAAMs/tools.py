@@ -449,7 +449,7 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     ni = []
     for i, ds, t in zip(normalized_images, dense_shapes, _removed_transform):
         img = i.warp_to_shape(i.shape, _rf_align.compose_before(t), warp_landmarks=True)
-        img.landmarks['PTS'] = ds
+        img.landmarks[group] = ds
         ni.append(img)
 
-    return ni, transforms, reference_frame, n_landmarks#, reference_frame, dense_reference_shape, reference_shape, testing_points,target_shape,align_t
+    return ni, transforms, reference_frame, n_landmarks, _n_align_points#, reference_frame, dense_reference_shape, reference_shape, testing_points,target_shape,align_t
