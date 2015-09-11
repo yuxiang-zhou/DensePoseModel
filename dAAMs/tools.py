@@ -8,6 +8,7 @@ import menpo.io as mio
 import scipy.io as sio
 
 from .svs import SVS
+from .icp import nicp, icp, SICP, SNICP
 from .lineerror import interpolate
 from .MatlabExecuter import MatlabExecuter
 from .transforms import OpticalFlowTransform
@@ -18,9 +19,7 @@ from matplotlib.path import Path as matpath
 from scipy.spatial.distance import euclidean as dist
 
 from menpo.image import Image, BooleanImage
-from menpo.transform.icp import nicp, icp
 from menpo.shape import TriMesh, PointCloud
-from menpo.transform.icp import SICP, SNICP
 from menpo.transform import Translation, AlignmentSimilarity
 
 from menpofit.builder import build_reference_frame
@@ -253,7 +252,7 @@ def _build_svs(svs_path_in, _norm_imgs, target_shape, aligned_shapes, align_t,
                     for pts in points[g]:
                         store_image.pixels[0, pts[0], pts[1]] = 1
                 else:
-                    raise Exception('Undefined Shape Descriptor: {}'.format(self._shape_desc))
+                    raise Exception('Undefined Shape Descriptor: {}'.format(_shape_desc))
 
                 mio.export_image(
                     store_image,
