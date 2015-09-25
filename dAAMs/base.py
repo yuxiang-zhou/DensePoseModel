@@ -1,53 +1,17 @@
-import os
-import sys
-import glob
-import uuid
-import subprocess
-import menpo.io as mio
-import scipy.io as sio
-import numpy as np
-import warnings
-
 from copy import deepcopy
-
-from menpo.shape import PointCloud
-from menpo.transform.piecewiseaffine.base import CythonPWA as pwa
-from menpo.transform.piecewiseaffine import PiecewiseAffine
-
-from .MatlabExecuter import MatlabExecuter
-from .lineerror import interpolate
-from .svs import SVS
-from .transforms import OpticalFlowTransform
 from .tools import rescale_images_to_reference_shape
 from .transforms import LinearWarp
 
 from menpofit.aam import HolisticAAM
-from menpofit import checks
-from menpofit.transform import (DifferentiableThinPlateSplines,
-                                DifferentiablePiecewiseAffine)
+
 from menpo.transform.piecewiseaffine.base import CythonPWA as pwa
-from menpo.transform import Scale
-from menpofit.builder import normalization_wrt_reference_shape
-
 from menpo.feature import no_op
-from menpo.feature import igo
-
-from menpo.image import Image, BooleanImage
-from menpo.transform.icp import SICP, SNICP
 from menpo.model import PCAModel
-from menpo.visualize import print_dynamic, progress_bar_str
-from menpo.transform import Translation, AlignmentSimilarity
+from menpo.visualize import print_dynamic
 
-
-from skimage import filters
-from os.path import isfile
-from matplotlib.path import Path as matpath
-from menpofit.base import name_of_callable, batch
 from menpofit.builder import (
-    build_reference_frame, build_patch_reference_frame,
-    compute_features, scale_images, build_shape_model,
-    align_shapes, densify_shapes,
-    extract_patches, MenpoFitBuilderWarning, compute_reference_shape)
+    build_reference_frame,
+    compute_features, scale_images,)
 
 
 class dAAMs(HolisticAAM):
@@ -89,7 +53,7 @@ class dAAMs(HolisticAAM):
             lowest to highest scale
         """
         # Rescale to existing reference shape
-        image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms\
+        image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms, self.debug\
             = rescale_images_to_reference_shape(
                 image_batch, group, self.reference_shape,
                 verbose=verbose
@@ -143,9 +107,10 @@ class dAAMs(HolisticAAM):
             # reference shape, computed here. This is because the mean
             # moves when we are incrementing, and we need a consistent
             # reference frame.
-            warped_images = self._warp_images(scaled_images, scale_shapes,
-                                              self.reference_shape,
-                                              j, scale_prefix, verbose)
+            warped_images = self.warped_images = self._warp_images(
+                scaled_images, scale_shapes, self.reference_shape,
+                j, scale_prefix, verbose
+            )
 
             # obtain appearance model
             if verbose:
@@ -176,7 +141,10 @@ class dAAMs(HolisticAAM):
         scaled_images = scale_images(images, self.scales[scale_index],
                                              prefix=prefix,
                                              verbose=verbose)
-        return warp_images(scaled_images, self.reference_frame, self.transforms, self.scales[scale_index])
+        warpped, landmarkmapping, timages = warp_images(scaled_images, self.reference_frame, self.transforms, self.scales[scale_index])
+        if self.scales[scale_index] >= 1.0:
+            self.mapping = [landmarkmapping, timages]
+        return warpped
 
     def _instance(self, scale_index, shape_instance, appearance_instance):
         template = self.appearance_models[scale_index].mean()
@@ -201,8 +169,13 @@ def warp_images(images, reference_frame, transforms, scale):
         # warp images
         rescale = 1.0 / scale
         scale_i = i.rescale(rescale) if scale != 1.0 else i
-        warped_i = scale_i.warp_to_mask(reference_frame.mask, t)
+        warped_i = scale_i.warp_to_mask(reference_frame.mask, t, warp_landmarks=False)
         # attach reference frame landmarks to images
         warped_i.landmarks['source'] = reference_frame.landmarks['source']
         warped_images.append(warped_i)
-    return warped_images
+
+    landmark_mapping = []
+    for i, t in zip(warped_images, transforms):
+        landmark_mapping.append(t.apply(i.landmarks['source'].lms))
+
+    return warped_images, landmark_mapping, images

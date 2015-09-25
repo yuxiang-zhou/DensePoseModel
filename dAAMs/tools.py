@@ -24,6 +24,7 @@ from menpo.transform import Translation, AlignmentSimilarity
 
 from menpofit.builder import build_reference_frame
 
+
 def group_from_labels(lmg):
     # return [[<group>],[<group>],[<group>] ...]
     groups = []
@@ -92,7 +93,9 @@ def FastNICP(sources, target):
 
 
 def align_shapes(shapes, target_shape, lms_shapes=None, align_target=None):
+
     if align_target:
+        print 'Using AlignmentSimilarity'
         lms_target = align_target
 
         forward_transform = [
@@ -106,6 +109,7 @@ def align_shapes(shapes, target_shape, lms_shapes=None, align_target=None):
         _icp = None
 
     else:
+        print 'Using ICP'
         # Align Shapes Using ICP
         _icp = SICP(shapes, target_shape)
         aligned_shapes = _icp.aligned_shapes
@@ -282,11 +286,9 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     n_landmarks = reference_shape.n_points
     # Normalize the scaling of all images wrt the reference_shape size
     for i in images:
-        if glob.glob('{}/*_lms.pts'.format(i.path.parent)):
+        if 'LMS' in i.landmarks.keys():
             _has_lms_align = True
-            i.landmarks['align'] = mio.import_landmark_file(
-                '{}/{}_lms.pts'.format(i.path.parent, i.path.stem)
-            )
+            i.landmarks['align'] = i.landmarks['LMS']
             if not _n_align_points:
                 _n_align_points = i.landmarks['align'].lms.n_points
 
@@ -310,11 +312,6 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     n_shapes = len(shapes)
 
 
-    # groups label
-    sample_groups = group_from_labels(
-        normalized_images[0].landmarks[group]
-    )
-
     # Align Shapes Using ICP
     aligned_shapes, target_shape, _removed_transform, _icp_transform, _icp\
         = align_shapes(shapes, reference_shape, lms_shapes=lms_shapes, align_target=reference_align_shape)
@@ -328,6 +325,12 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         bound_list.append(np.array([bmin[0], bmax[1]]))
         bound_list.append(np.array([bmax[0], bmin[1]]))
     bound_list = PointCloud(np.array(bound_list))
+
+    scales = np.max(bound_list.points, axis=0) - np.min(bound_list.points, axis=0)
+    max_scale = np.max(scales)
+    bound_list = PointCloud(np.array([
+        [max_scale, max_scale], [max_scale, 0], [0, max_scale], [0, 0]
+    ]))
 
     reference_frame = build_reference_frame(bound_list, boundary=15)
 
@@ -344,20 +347,6 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     # Set All True Pixels for Mask
     reference_frame.mask.pixels = np.ones(
         reference_frame.mask.pixels.shape, dtype=np.bool)
-
-    # Mask Reference Frame
-    # reference_frame.landmarks['sparse'] = reference_shape
-    # self.reference_frame.constrain_mask_to_landmarks(group='sparse')
-
-    # Get Dense Shape from Masked Image
-    # dense_reference_shape = PointCloud(
-    #     self.reference_frame.mask.true_indices()
-    # )
-
-    # Set Dense Shape as Reference Landmarks
-    # self.reference_frame.landmarks['source'] = dense_reference_shape
-    # self._shapes = shapes
-    # self._aligned_shapes = []
 
     # Create Cache Directory
     home_dir = os.getcwd()
@@ -451,4 +440,4 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         img.landmarks[group] = ds
         ni.append(img)
 
-    return ni, transforms, reference_frame, n_landmarks, _n_align_points#, reference_frame, dense_reference_shape, reference_shape, testing_points,target_shape,align_t
+    return ni, transforms, reference_frame, n_landmarks, _n_align_points, [aligned_shapes, target_shape, reference_frame, dense_reference_shape, testing_points,align_t,normalized_images,shapes,lms_shapes,reference_shape,reference_align_shape]

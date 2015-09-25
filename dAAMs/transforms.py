@@ -21,6 +21,17 @@ class OpticalFlowTransform(Transform):
             p += np.array([self._u[i, j], self._v[i, j]])
         return ret
 
+    @property
+    def n_dims(self):
+        r"""
+        The dimensionality of the data the transform operates on.
+
+        None if the transform is not dimension specific.
+
+        :type: int or None
+        """
+        return 2
+
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
