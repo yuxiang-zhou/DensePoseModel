@@ -1,7 +1,8 @@
+import numpy as np
+
 from menpo.shape import PointCloud
 from menpofit.aam.result import AAMFitterResult
-from menpofit.result import compute_normalise_point_to_point_error
-
+from menpofit.result import compute_point_to_point_error
 
 
 class DAAMFitterResult(AAMFitterResult):
@@ -85,3 +86,13 @@ class DAAMFitterResult(AAMFitterResult):
         else:
             raise ValueError('Ground truth has not been set, errors cannot '
                              'be computed')
+
+
+def compute_normalise_point_to_point_error(shape, gt_shape, norm_shape=None):
+    r"""
+    """
+    if norm_shape is None:
+        norm_shape = gt_shape
+    normalizer = np.mean(np.max(norm_shape, axis=0) -
+                         np.min(norm_shape, axis=0))
+    return compute_point_to_point_error(shape, gt_shape) / normalizer

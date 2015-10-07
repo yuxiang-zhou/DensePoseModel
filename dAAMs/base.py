@@ -59,6 +59,8 @@ class dAAMs(HolisticAAM):
                 verbose=verbose
             )
 
+        self.normalised_img = image_batch
+
         # build models at each scale
         if verbose:
             print_dynamic('- Building models\n')

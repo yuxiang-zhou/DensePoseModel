@@ -21,6 +21,7 @@ from scipy.spatial.distance import euclidean as dist
 from menpo.image import Image, BooleanImage
 from menpo.shape import TriMesh, PointCloud
 from menpo.transform import Translation, AlignmentSimilarity
+from menpo.visualize import print_dynamic
 
 from menpofit.builder import build_reference_frame
 
@@ -58,7 +59,7 @@ def minimum_distance(v, w, p, tolerance=1.0):
     return dist(p, projection)
 
 
-def sample_points(target, range_x, range_y, edge=None):
+def sample_points(target, range_x, range_y, edge=None, x=0, y=0):
     ret_img = Image.init_blank((range_x, range_y))
 
     if edge is None:
@@ -67,7 +68,7 @@ def sample_points(target, range_x, range_y, edge=None):
     for eg in edge:
         for pts in interpolate(target[eg], 0.1):
             try:
-                ret_img.pixels[0, pts[0], pts[1]] = 1
+                ret_img.pixels[0, pts[0]-y, pts[1]-x] = 1
             except:
                 print 'Index out of Bound'
 
@@ -145,7 +146,7 @@ def _build_svs(svs_path_in, _norm_imgs, target_shape, aligned_shapes, align_t,
                     [AlignmentSimilarity(target_shape, target_shape)] + _icp_transform
                 )
         ):
-            print ("  - SVS Training {} out of {}".format(
+            print_dynamic("  - SVS Training {} out of {}".format(
                 j, len(aligned_shapes) + 1)
             )
             # Align shapes with reference frame
@@ -436,7 +437,7 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
 
     ni = []
     for i, ds, t in zip(normalized_images, dense_shapes, _removed_transform):
-        img = i.warp_to_shape(i.shape, _rf_align.compose_before(t), warp_landmarks=True)
+        img = i.warp_to_shape(reference_frame.shape, _rf_align.compose_before(t), warp_landmarks=True)
         img.landmarks[group] = ds
         ni.append(img)
 
