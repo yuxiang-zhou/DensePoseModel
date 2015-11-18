@@ -21,14 +21,16 @@ class dAAMs(HolisticAAM):
     def __init__(self, images, group=None, verbose=False, reference_shape=None,
                  holistic_features=no_op, diagonal=None,
                  scales=(0.5, 1.0), max_shape_components=None,
-                 max_appearance_components=None, batch_size=None):
+                 max_appearance_components=None, batch_size=None, tight_mask=True):
 
+        self.tight_mask = tight_mask
         super(dAAMs, self).__init__(images, group, verbose,
                  reference_shape,
                  holistic_features,
                  LinearWarp, diagonal,
                  scales, max_shape_components,
                  max_appearance_components, batch_size)
+
 
     def _train_batch(self, image_batch, increment=False, group=None,
                      verbose=False, shape_forgetting_factor=1.0,
@@ -56,6 +58,7 @@ class dAAMs(HolisticAAM):
         image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms, self.debug\
             = rescale_images_to_reference_shape(
                 image_batch, group, self.reference_shape,
+                tight_mask=self.tight_mask,
                 verbose=verbose
             )
 

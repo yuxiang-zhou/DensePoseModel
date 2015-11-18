@@ -1,6 +1,7 @@
 from .transforms import LinearWarp
 from .results import DAAMFitterResult
 
+from menpofit import checks
 from menpofit.aam import LucasKanadeAAMFitter
 from menpofit.aam.algorithm.lk import (
     LucasKanadeStandardInterface, WibergInverseCompositional)
