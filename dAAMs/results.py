@@ -1,8 +1,8 @@
 import numpy as np
 
 from menpo.shape import PointCloud
-from menpofit.aam.result import AAMFitterResult
-from menpofit.result import compute_point_to_point_error
+from menpofit.aam.result import AAMResult as AAMFitterResult
+from menpofit.error import euclidean_bb_normalised_error as compute_point_to_point_error
 
 
 class DAAMFitterResult(AAMFitterResult):

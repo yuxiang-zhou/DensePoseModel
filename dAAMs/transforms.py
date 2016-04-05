@@ -15,7 +15,7 @@ class OpticalFlowTransform(Transform):
         self._v = u
 
     def _apply(self, x, **kwargs):
-        ret = x.copy()
+        ret = x.copy().astype(float)
         for p in ret:
             i, j = p[0].astype(int), p[1].astype(int)
             p += np.array([self._u[i, j], self._v[i, j]])

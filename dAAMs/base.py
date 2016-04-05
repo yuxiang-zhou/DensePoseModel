@@ -1,5 +1,6 @@
 from copy import deepcopy
 from .tools import rescale_images_to_reference_shape
+from .tools import svs_shape
 from .transforms import LinearWarp
 
 from menpofit.aam import HolisticAAM
@@ -7,6 +8,7 @@ from menpofit.aam import HolisticAAM
 from menpo.transform.piecewiseaffine.base import CythonPWA as pwa
 from menpo.feature import no_op
 from menpo.model import PCAModel
+from menpofit.modelinstance import OrthoPDM
 from menpo.visualize import print_dynamic
 
 from menpofit.builder import (
@@ -19,16 +21,19 @@ class dAAMs(HolisticAAM):
     Active Appearance Model class.
     """
     def __init__(self, images, group=None, verbose=False, reference_shape=None,
-                 holistic_features=no_op, diagonal=None,
+                 holistic_features=no_op, diagonal=None, target_group=None,
                  scales=(0.5, 1.0), max_shape_components=None,
-                 max_appearance_components=None, batch_size=None, tight_mask=True):
+                 max_appearance_components=None, batch_size=None, tight_mask=True,
+                 shape_desc=svs_shape):
 
         self.tight_mask = tight_mask
+        self.shape_desc = shape_desc
+        self.target_group = target_group
         super(dAAMs, self).__init__(images, group, verbose,
                  reference_shape,
                  holistic_features,
                  LinearWarp, diagonal,
-                 scales, max_shape_components,
+                 scales, OrthoPDM, max_shape_components,
                  max_appearance_components, batch_size)
 
 
@@ -55,10 +60,10 @@ class dAAMs(HolisticAAM):
             lowest to highest scale
         """
         # Rescale to existing reference shape
-        image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms, self.debug\
+        image_batch, self.transforms, self.reference_frame, self.n_landmarks, self.n_align_lms,_,_,_,self.reference_shape,self.debug\
             = rescale_images_to_reference_shape(
                 image_batch, group, self.reference_shape,
-                tight_mask=self.tight_mask,
+                tight_mask=self.tight_mask, sd=self.shape_desc, target_group=self.target_group,
                 verbose=verbose
             )
 

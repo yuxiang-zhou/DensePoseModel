@@ -8,6 +8,7 @@ import subprocess
 import numpy as np
 import menpo.io as mio
 import scipy.io as sio
+from scipy.spatial.distance import euclidean
 
 from .svs import SVS
 from .icp import nicp, icp, SICP, SNICP
@@ -24,8 +25,157 @@ from menpo.image import Image, BooleanImage
 from menpo.shape import TriMesh, PointCloud
 from menpo.transform import Translation, AlignmentSimilarity, Scale, AlignmentRotation, AlignmentUniformScale
 from menpo.visualize import print_dynamic
-
+from menpo.transform import GeneralizedProcrustesAnalysis
+from menpo.model import PCAModel
+from menpo.feature import igo, hog, no_op, double_igo as digo, dsift
 from menpofit.builder import build_reference_frame
+from scipy.ndimage.morphology import distance_transform_edt
+
+def normalise_image(img):
+    ret_img = img.copy()
+    hp = img.pixels
+    nhp = (hp-np.min(hp))
+    nhp = nhp/np.max(nhp)
+    ret_img.pixels = nhp
+    return ret_img
+
+
+# binary based shape descriptor ----------------------------
+def binary_shape(pc, xr, yr, groups=None):
+    return sample_points(pc.points, xr, yr, groups)
+
+
+def distance_transform_shape(pc, xr, yr, groups=None):
+    rsi = binary_shape(pc, xr, yr, groups)
+    ret = distance_transform_edt(rsi.rolled_channels().squeeze())
+
+    return Image.init_from_rolled_channels(ret.T)
+
+
+def shape_context_shape(pc, xr, yr, groups=None, sampls=None, r_inner=0.125, r_outer=2, nbins_r=5, nbins_theta=12):
+    nbins = nbins_r*nbins_theta
+
+    def get_angle(p1,p2):
+        """Return angle in radians"""
+        return math.atan2((p2[1] - p1[1]),(p2[0] - p1[0]))
+
+    def compute_one(pt, points, mean_dist):
+
+        distances = np.array([euclidean(pt,p) for p in points])
+        r_array_n = distances / mean_dist
+
+        r_bin_edges = np.logspace(np.log10(r_inner), np.log10(r_outer), nbins_r)
+
+        r_array_q = np.zeros(len(points))
+        for m in xrange(nbins_r):
+           r_array_q +=  (r_array_n < r_bin_edges[m])
+
+        fz = r_array_q > 0
+
+        def _get_angles(self, x):
+            result = zeros((len(x), len(x)))
+            for i in xrange(len(x)):
+                for j in xrange(len(x)):
+                    result[i,j] = get_angle(x[i],x[j])
+            return result
+
+        theta_array = np.array([get_angle(pt,p)for p in points])
+        # 2Pi shifted
+        theta_array_2 = theta_array + 2*math.pi * (theta_array < 0)
+        theta_array_q = 1 + np.floor(theta_array_2 /(2 * math.pi / nbins_theta))
+
+        sn = np.zeros((nbins_r, nbins_theta))
+        for j in xrange(len(points)):
+            if (fz[j]):
+                sn[r_array_q[j] - 1, theta_array_q[j] - 1] += 1
+
+        return sn.reshape(nbins)
+
+
+    rsi = binary_shape(pc, xr, yr, groups)
+    pixels = rsi.pixels.squeeze()
+    pts = np.argwhere(pixels > 0)
+    if sampls:
+        pts = pts[np.random.randint(0,pts.shape[0],sampls)]
+    mean_dist = dist([0,0],[xr,yr]) / 2
+
+    sc = np.zeros((xr,yr,nbins))
+
+    for x in xrange(xr):
+        for y in xrange (yr):
+            sc[x,y,:] = compute_one(np.array([x,y]), pts, mean_dist)
+
+    return Image.init_from_rolled_channels(sc)
+# ----------------------------------------------------------
+
+
+# SVS based Shape Descriptor -------------------------------
+def svs_shape(pc, xr, yr, groups=None):
+    store_image = Image.init_blank((xr,yr))
+    ni = binary_shape(pc, xr, yr, groups)
+    store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
+    return store_image
+
+
+def hog_svs_shape(pc, xr, yr, groups=None):
+    store_image = hog(svs_shape(pc, xr, yr, groups))
+    return store_image
+
+
+def sift_svs_shape(pc, xr, yr, groups=None):
+    store_image = dsift(svs_shape(pc, xr, yr, groups))
+    return store_image
+
+
+def sample_gaussian_shape(pc, xr, yr, groups=None):
+    ni = Image.init_blank((xr, yr))
+    for pts in pc.points:
+        ni.pixels[0, pts[0], pts[1]] = 1
+    store_image = Image.init_blank(ni.shape)
+    store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 4)
+    return store_image
+
+# ------------------------------------------------------------
+
+def sample_shape(pc, xr, yr, groups=None):
+    store_image = Image.init_blank((xr, yr))
+    for pts in pc.points:
+        store_image.pixels[0, pts[0], pts[1]] = 1
+    return store_image
+
+
+def build_shape_model(shapes, max_components=None):
+    r"""
+    Builds a shape model given a set of shapes.
+
+    Parameters
+    ----------
+    shapes: list of :map:`PointCloud`
+        The set of shapes from which to build the model.
+    max_components: None or int or float
+        Specifies the number of components of the trained shape model.
+        If int, it specifies the exact number of components to be retained.
+        If float, it specifies the percentage of variance to be retained.
+        If None, all the available components are kept (100% of variance).
+
+    Returns
+    -------
+    shape_model: :class:`menpo.model.pca`
+        The PCA shape model.
+    """
+    # centralize shapes
+    centered_shapes = [Translation(-s.centre()).apply(s) for s in shapes]
+    # align centralized shape using Procrustes Analysis
+    gpa = GeneralizedProcrustesAnalysis(centered_shapes)
+    aligned_shapes = [s.aligned_source() for s in gpa.transforms]
+
+    # build shape model
+    shape_model = PCAModel(aligned_shapes)
+    if max_components is not None:
+        # trim shape model if required
+        shape_model.trim_components(max_components)
+
+    return shape_model
 
 
 def group_from_labels(lmg):
@@ -40,7 +190,7 @@ def group_from_labels(lmg):
             groups.append(range(lindex, lindex + g_size))
             lindex += g_size
 
-    groups = np.array(groups) if lindex > 0 else None
+    groups = np.array(groups) if lindex > 0 else [range(lmg.lms.n_points)]
 
     return groups
 
@@ -68,14 +218,15 @@ def sample_points(target, range_x, range_y, edge=None, x=0, y=0):
     ret_img = Image.init_blank((range_x, range_y))
 
     if edge is None:
-        edge = [range(len(target))]
-
-    for eg in edge:
-        for pts in interpolate(target[eg], 0.1):
-            try:
-                ret_img.pixels[0, pts[0]-y, pts[1]-x] = 1
-            except:
-                print 'Index out of Bound'
+        for pts in target:
+            ret_img.pixels[0, pts[0]-y, pts[1]-x] = 1
+    else:
+        for eg in edge:
+            for pts in interpolate(target[eg], 0.1):
+                try:
+                    ret_img.pixels[0, pts[0]-y, pts[1]-x] = 1
+                except:
+                    print 'Index out of Bound'
 
     return ret_img
 
@@ -131,38 +282,38 @@ def align_shapes(shapes, target_shape, lms_shapes=None, align_target=None):
     return aligned_shapes, target_shape, removed_transform, forward_transform, _icp
 
 
-def _build_svs(svs_path_in, _norm_imgs, target_shape, aligned_shapes, align_t,
+def _build_shape_desc(sd_path_in, _norm_imgs, target_shape, aligned_shapes, align_t,
                reference_frame, _icp_transform, _is_mc=False, group=None,
-               target_align_shape=None, _shape_desc='draw_gaussian'):
-    svs_path_in = '{}'.format(svs_path_in)
-    if not os.path.exists(svs_path_in):
-        os.makedirs(svs_path_in)
+               target_align_shape=None, _shape_desc=svs_shape, align_group='align', target_group=None):
+    sd_path_in = '{}'.format(sd_path_in)
+    if not os.path.exists(sd_path_in):
+        os.makedirs(sd_path_in)
     # Build Transform Using SVS
     xr, yr = reference_frame.shape
 
     # Draw Mask
-    mask_shape = mask_pc(align_t.apply(target_shape))
-    mask_image = Image.init_blank((xr, yr))
-    for pts in mask_shape.points:
-        mask_image.pixels[0, pts[0], pts[1]] = 1
-    mio.export_image(
-        mask_image,
-        '{}/ref_mask.png'.format(svs_path_in),
-        overwrite=True
-    )
+    # mask_shape = mask_pc(align_t.apply(target_shape))
+    # mask_image = Image.init_blank((xr, yr))
+    # for pts in mask_shape.points:
+    #     mask_image.pixels[0, pts[0], pts[1]] = 1
+    # mio.export_image(
+    #     mask_image,
+    #     '{}/ref_mask.png'.format(sd_path_in),
+    #     overwrite=True
+    # )
 
-    if ((
-            not glob.glob(svs_path_in + '/*.gif')
-            and _is_mc)
-            or (not glob.glob(svs_path_in + '/svs_*.png')
-                and not _is_mc)):
-        for j, (a_s, tr) in enumerate(
+    if (not glob.glob(sd_path_in + '/sd_*.gif')):
+
+        target_group = target_group if not target_group is None  else [range(target_shape.n_points)]
+        for j, (a_s, tr, svsLms,groups) in enumerate(
                 zip(
                     [target_shape] + aligned_shapes.tolist(),
-                    [AlignmentSimilarity(target_shape, target_shape)] + _icp_transform
+                    [AlignmentSimilarity(target_shape, target_shape)] + _icp_transform,
+                    [target_align_shape]+[ni.landmarks[align_group].lms for ni in _norm_imgs],
+                    [target_group]+[group_from_labels(ni.landmarks[group]) for ni in _norm_imgs]
                 )
         ):
-            print_dynamic("  - SVS Training {} out of {}".format(
+            print_dynamic("  - Shape Descriptor Training {} out of {}".format(
                 j, len(aligned_shapes) + 1)
             )
             # Align shapes with reference frame
@@ -170,134 +321,37 @@ def _build_svs(svs_path_in, _norm_imgs, target_shape, aligned_shapes, align_t,
             points = temp_as.points
 
             # Store SVS Landmarks
-            svsLmsPath = '{}/svs_{:04d}_lms.pts'.format(svs_path_in, j)
-            svsLms = target_align_shape if j == 0 else _norm_imgs[j-1].landmarks['align'].lms
+            svsLmsPath = '{}/sd_{:04d}_lms.pts'.format(sd_path_in, j)
             svsLms = align_t.apply(tr.apply(svsLms))
             if not os.path.exists(svsLmsPath):
                 tempRef = reference_frame.copy()
                 tempRef.landmarks['temp'] = svsLms
                 mio.export_landmark_file(tempRef.landmarks['temp'], svsLmsPath)
 
-            img_label = _norm_imgs[j-1] if j > 0 else _norm_imgs[j]
-            groups = group_from_labels(img_label.landmarks[group])
-            store_image = Image.init_blank((xr,yr))
-            ni = sample_points(points, xr, yr, groups)
-            store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
 
-            # # Construct tplt_edge
-            # tplt_edge = None
-            # lindex = 0
-            # # Get Grouped Landmark Indexes
-            # if j > 0:
-            #     g_i = _norm_imgs[j-1].landmarks[group].items()
-            # else:
-            #     g_i = _norm_imgs[j].landmarks[group].items()
-            #     if not g_i[0][1].n_points == a_s.n_points:
-            #         g_i = [['Reference', a_s]]
-            #
-            # edge_g = []
-            # edge_ig = []
-            # for g in g_i:
-            #     g_size = g[1].n_points
-            #     rindex = g_size+lindex
-            #     edges_range = np.array(range(lindex, rindex))
-            #     edge_ig.append(edges_range)
-            #     edges = np.hstack((
-            #         edges_range[:g_size-1, None], edges_range[1:, None]
-            #     ))
-            #     edge_g.append(edges)
-            #     tplt_edge = edges if tplt_edge is None else np.vstack((
-            #         tplt_edge, edges
-            #     ))
-            #     lindex = rindex
-            #
-            # tplt_edge = np.concatenate(edge_g)
-            # print tplt_edge
-            # #
-            # # Store SVS Image
-            # if _shape_desc == 'SVS':
-            #     svs = SVS(
-            #         points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
-            #         gamma=0.8, max_f=20
-            #     )
-            #     store_image = svs.svs_image(range(xr), range(yr))
-            # elif _shape_desc == 'draw':
-            #     store_image = sample_points(points, xr, yr, edge_ig)
-            # elif _shape_desc == 'draw_gaussian':
-            #     ni = sample_points(points, xr, yr, edge_ig)
-            #     store_image = Image.init_blank(ni.shape)
-            #     store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
-            # elif _shape_desc == 'sample_gaussian':
-            #     ni = Image.init_blank((xr, yr))
-            #     for pts in points:
-            #         ni.pixels[0, pts[0], pts[1]] = 1
-            #     store_image = Image.init_blank(ni.shape)
-            #     store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
-            # elif _shape_desc == 'sample':
-            #     store_image = Image.init_blank((xr, yr))
-            #     for pts in points:
-            #         store_image.pixels[0, pts[0], pts[1]] = 1
-            # else:
-            #     raise Exception('Undefined Shape Descriptor: {}'.format(_shape_desc))
-
-            mio.export_image(
-                store_image,
-                '{}/svs_{:04d}.png'.format(svs_path_in, j),
-                overwrite=True
-            )
-            #
-            # # Train Group SVS
-            # for ii, g in enumerate(edge_ig):
-            #     g_size = points[g].shape[0]
-            #     edges_range = np.array(range(g_size))
-            #     edges = np.hstack((
-            #         edges_range[:g_size-1, None], edges_range[1:, None]
-            #     ))
-            #
-            #     # Store SVS Image
-            #     if _shape_desc == 'SVS':
-            #         svs = SVS(
-            #             points[g], tplt_edge=edges, tolerance=3, nu=0.8,
-            #             gamma=0.8, max_f=20
-            #         )
-            #         store_image = svs.svs_image(range(xr), range(yr))
-            #     elif _shape_desc == 'draw':
-            #         store_image = sample_points(points[g], xr, yr)
-            #     elif _shape_desc == 'draw_gaussian':
-            #         ni = sample_points(points[g], xr, yr, edge_ig)
-            #         store_image = Image.init_blank(ni.shape)
-            #         store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
-            #     elif _shape_desc == 'sample_gaussian':
-            #         ni = Image.init_blank((xr, yr))
-            #         for pts in points[g]:
-            #             ni.pixels[0, pts[0], pts[1]] = 1
-            #         store_image = Image.init_blank(ni.shape)
-            #         store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
-            #     elif _shape_desc == 'sample':
-            #         store_image = Image.init_blank((xr, yr))
-            #         for pts in points[g]:
-            #             store_image.pixels[0, pts[0], pts[1]] = 1
-            #     else:
-            #         raise Exception('Undefined Shape Descriptor: {}'.format(_shape_desc))
-            #
-            #     mio.export_image(
-            #         store_image,
-            #         '{}/svs_{:04d}.png'.format(svs_path_in, j),
-            #         overwrite=True
-            #     )
+            store_image = normalise_image(_shape_desc(temp_as, xr, yr, groups))
 
             # Create gif from svs group
-            #     convert -delay 10 -loop 0 svs_0001_g*.png test.gif
+            #     convert -delay 10 -loop 0 sd_0001_g*.png test.gif
 
-            # subprocess.Popen([
-            #     'convert',
-            #     '-delay', '10', '-loop', '0',
-            #     '{0}/svs_{1:04d}_g*.png'.format(svs_path_in, j),
-            #     '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
+            for ch in range(store_image.n_channels):
+                channel_img = store_image.extract_channels(ch)
+                mio.export_image(
+                    channel_img,
+                    '{}/sd_{:04d}_g{:02d}.png'.format(sd_path_in, j, ch),
+                    overwrite=True
+                )
+
+            subprocess.Popen([
+                'convert',
+                '-delay', '10', '-loop', '0',
+                '{0}/sd_{1:04d}_g*.png'.format(sd_path_in, j),
+                '{0}/sd_{1:04d}.gif'.format(sd_path_in, j)
+            ])
 
 
 def rescale_images_to_reference_shape(images, group, reference_shape,
-                                        tight_mask=True,
+                                        tight_mask=True, sd=svs_shape, target_group=None,
                                         verbose=False):
     r"""
     """
@@ -324,14 +378,21 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         reference_shape = PointCloud(
             reference_shape.points[_n_align_points:]
         )
+    else:
+        group_align = '_nicp'
+        for i in images:
+            source_shape = TriMesh(reference_shape.points)
+            _, points_corr = nicp(source_shape, i.landmarks[group].lms)
+            i.landmarks[group_align] = PointCloud(i.landmarks[group].lms.points[points_corr])
 
+    print('  - Normalising')
     normalized_images = [i.rescale_to_pointcloud(reference_align_shape, group=group_align)
                          for i in images]
 
     # Global Parameters
     alpha = 30
     pdm = 0
-    lms_shapes = [i.landmarks['align'].lms for i in normalized_images]
+    lms_shapes = [i.landmarks[group_align].lms for i in normalized_images]
     shapes = [i.landmarks[group].lms for i in normalized_images]
     n_shapes = len(shapes)
 
@@ -339,10 +400,9 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     # Align Shapes Using ICP
     aligned_shapes, target_shape, _removed_transform, _icp_transform, _icp\
         = align_shapes(shapes, reference_shape, lms_shapes=lms_shapes, align_target=reference_align_shape)
-
     # Build Reference Frame from Aligned Shapes
     bound_list = []
-    for s in aligned_shapes:
+    for s in [reference_shape] + aligned_shapes.tolist():
         bmin, bmax = s.bounds()
         bound_list.append(bmin)
         bound_list.append(bmax)
@@ -376,47 +436,51 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
     home_dir = os.getcwd()
     dir_hex = uuid.uuid1()
 
-    svs_path_in = _db_path if _db_path else '{}/.cache/{}/svs_training'.format(home_dir, dir_hex)
-    svs_path_out = svs_path_in
+    sd_path_in = '{}/shape_discriptor'.format(_db_path) if _db_path else '{}/.cache/{}/sd_training'.format(home_dir, dir_hex)
+    sd_path_out = sd_path_in
 
     matE = MatlabExecuter()
     mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfdev'
 
     # Skip building svs is path specified
-    _build_svs(svs_path_in, normalized_images, reference_shape, aligned_shapes, align_t,
+    _build_shape_desc(sd_path_in, normalized_images, reference_shape, aligned_shapes, align_t,
                reference_frame, _icp_transform, _is_mc=_is_mc, group=group,
-               target_align_shape=reference_align_shape, _shape_desc='draw_gaussian')
+               target_align_shape=reference_align_shape, _shape_desc=sd,
+               align_group=group_align, target_group=target_group
+               )
 
 
     # self._build_trajectory_basis(sample_groups, target_shape,
     #     aligned_shapes, dense_reference_shape, align_t)
 
     # Call Matlab to Build Flows
-    if not isfile('{}/result.mat'.format(_db_path)):
+    if not isfile('{}/result.mat'.format(sd_path_in)):
         print('  - Building Shape Flow')
         matE.cd(mat_code_path)
-        ext = 'gif' if _is_mc else 'png'
-        isLms = 1
+        ext = 'gif'
+        isLms = _has_lms_align + 0
         isBasis = 0
-        fstr = 'addpath(\'{0}/{1}\');' \
-               'addpath(\'{0}/{2}\');' \
-               'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
-               '{8}, \'{3}/{9}\', {10}, {11}, {14}, {15}, {12}, \'{13}\')'.format(
+        fstr =  'gpuDevice(1);' \
+                'addpath(\'{0}/{1}\');' \
+                'addpath(\'{0}/{2}\');' \
+                'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
+                '{8}, \'{3}/{9}\', {10}, {11}, {14}, {15}, {12}, \'{13}\')'.format(
                     mat_code_path, 'cudafiles', 'tools',
-                    svs_path_in, svs_path_out, 'svs_%04d.{}'.format(ext),
+                    sd_path_in, sd_path_out, 'sd_%04d.{}'.format(ext),
                     0,
                     1, n_shapes, 'bas.mat',
-                    alpha, pdm, 30, 'svs_%04d_lms.pts', isBasis, isLms
+                    alpha, pdm, 30, 'sd_%04d_lms.pts', isBasis, isLms
                )
         sys.stderr.write(fstr)
+        sys.stderr.write(fstr.replace('build_flow','build_flow_test'))
         p = matE.run_function(fstr)
         p.wait()
     else:
-        svs_path_out = _db_path
+        sd_path_out = sd_path_in
 
     # Retrieve Results
     mat = sio.loadmat(
-        '{}/result.mat'.format(svs_path_out)
+        '{}/result.mat'.format(sd_path_out)
     )
 
     _u, _v = mat['u'], mat['v']
@@ -469,7 +533,8 @@ def rescale_images_to_reference_shape(images, group, reference_shape,
         img.landmarks[group] = ds
         ni.append(img)
 
-    return ni, transforms, reference_frame, n_landmarks, _n_align_points, [
+    return ni, transforms, reference_frame, n_landmarks, _n_align_points, _removed_transform, normalized_images, _rf_align, reference_shape, [
+        align_t
         # _rf_align, _removed_transform, aligned_shapes, target_shape,
         # reference_frame, dense_reference_shape, testing_points,
         # align_t, normalized_images, shapes, lms_shapes,
@@ -538,21 +603,32 @@ def rotation_alignment_angle_ccw(pts1, pts2):
     return 360 - math.degrees(t.axis_and_angle_of_rotation()[-1])
 
 
-def line_to_sparse(training_images, rs, group='PTS'):
-    ni, transforms, reference_frame, n_landmarks, _n_align_points, [
-        _rf_align, _removed_transform, aligned_shapes, target_shape,
-        reference_frame, dense_reference_shape, testing_points,
-        align_t, normalized_images, shapes, lms_shapes,
-        reference_shape, reference_align_shape
-    ] = rescale_images_to_reference_shape(training_images,group, rs)
+def line_to_sparse(training_images,sparse_shape, rs, group='PTS', sd='draw_gaussian'):
+    ni, icp_transforms, reference_frame, n_landmarks, _n_align_points, _removed_transform, normalized_images, _rf_align, rs, [align_t] = rescale_images_to_reference_shape(training_images,group, rs, sd='sample_gaussian')
 
-    for i,n,t,norm in zip(training_images,ni,_removed_transform,normalized_images):
+    path_to_db = '{}'.format(training_images[0].path.parent)
+
+    # Retrieve Results
+    mat = sio.loadmat(
+        '{}/result.mat'.format(path_to_db)
+    )
+
+    _u, _v = mat['u'], mat['v']
+
+    # Build Transforms
+    print ("  - Build Transform")
+    transforms = []
+    for i in range(_u.shape[-1]):
+        transforms.append(
+            OpticalFlowTransform(_u[:, :, i], _v[:, :, i])
+            )
+
+    for i,n,t,norm, icpt, oft in zip(training_images,ni,_removed_transform, normalized_images, icp_transforms, transforms):
         scale = AlignmentUniformScale(norm.landmarks[group].lms, i.landmarks[group].lms)
-        pts = PointCloud(n.landmarks[group].lms.points[:rs.n_points])
+        pts = oft.apply(align_t.apply(sparse_shape))
         i.landmarks['SPARSE'] = scale.apply(t.apply(_rf_align.apply(pts)))
 
     return training_images
-
 
 from dAAMs.gridview import zero_flow_grid_pcloud, grid_triangulation
 def subsample_dense_pointclouds(dense_pclouds, shape, mask=None, sampling=6,

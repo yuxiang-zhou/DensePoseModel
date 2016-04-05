@@ -10,14 +10,6 @@ from menpofit.aam.algorithm.lk import (
 class LucasKanadeDAAMFitter(LucasKanadeAAMFitter):
     r"""
     """
-    def __init__(self, aam, lk_algorithm_cls=WibergInverseCompositional,
-                 n_shape=None, n_appearance=None, sampling=None):
-        self._model = aam
-        self._check_n_shape(n_shape)
-        self._check_n_appearance(n_appearance)
-        self._sampling = checks.check_sampling(sampling, aam.n_scales)
-        self._set_up(lk_algorithm_cls)
-
     def _set_up(self, lk_algorithm_cls):
         self.algorithms = []
         for j, (am, sm, s) in enumerate(zip(self.aam.appearance_models,
@@ -27,7 +19,7 @@ class LucasKanadeDAAMFitter(LucasKanadeAAMFitter):
             template = am.mean()
             # build orthonormal model driven transform
             md_transform = LinearWarp(
-                sm, self.aam.n_landmarks, self.aam.n_align_lms)
+                sm.model, self.aam.n_landmarks, self.aam.n_align_lms)
             interface = LucasKanadeStandardInterface(am, md_transform,
                                                      template, sampling=s)
             algorithm = lk_algorithm_cls(interface)
